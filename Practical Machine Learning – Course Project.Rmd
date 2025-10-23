@@ -1,0 +1,177 @@
+---
+title: "Practical Machine Learning – Course Project"
+author: "Phuoc NguyenNguyen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_float: true
+---
+
+# 1. Synopsis
+
+The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell to predict the manner in which participants performed a barbell lift exercise. The prediction target is the `classe` variable in the training dataset. This report details the steps taken to build a predictive model, including data preprocessing, model training, and evaluation.
+
+# 2. Loading and Preprocessing Data
+
+## 2.1. Setting up the Environment
+
+First, we load the required R libraries for this analysis. We will use `caret` for model training and evaluation, `dplyr` for data manipulation, `randomForest` for our prediction model, and `rpart` for decision tree visualization if needed.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE, cache=TRUE)
+```
+
+```{r load-libraries}
+library(caret)
+library(dplyr)
+library(randomForest)
+library(rpart)
+```
+
+## 2.2. Loading the Data
+
+Next, we load the training and testing datasets from the provided CSV files, which are available in the project directory.
+
+```{r load-data}
+# Load the training data
+pml.training <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!", ""))
+
+# Load the testing data
+pml.testing <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!", ""))
+```
+
+We can take a look at the dimensions of the loaded datasets.
+
+```{r dimensions}
+dim(pml.training)
+dim(pml.testing)
+```
+
+## 2.3. Data Cleaning
+
+Before building the model, we need to clean the data. This involves removing irrelevant columns and columns with a large number of missing values (NAs).
+
+First, let's identify and remove columns that consist mostly of NAs. We'll set a threshold and remove any column where more than 90% of the values are missing.
+
+```{r remove-na-cols}
+# Identify columns with a high percentage of missing values
+na_cols <- which(colSums(is.na(pml.training)) > 0.9 * nrow(pml.training))
+# Remove these columns
+training.cleaned <- pml.training[, -na_cols]
+```
+
+Next, we remove identifier columns and metadata that are not useful for predicting the `classe`. These include row numbers, user names, timestamps, and window identifiers.
+
+```{r remove-identifier-cols}
+# Identify and remove irrelevant columns
+identifier_cols <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+training.cleaned <- training.cleaned %>%
+  select(-one_of(identifier_cols))
+```
+
+After cleaning, let's check the new dimensions of our training data.
+
+```{r cleaned-dimensions}
+dim(training.cleaned)
+```
+
+Now the data is much cleaner, with fewer columns, and is ready for partitioning and model training.
+
+# 3. Model Building
+
+## 3.1. Data Partitioning
+
+To evaluate our model's performance, we need to split the cleaned training data into two parts: a training set and a validation set. We will use 70% of the data for training the model and the remaining 30% for validation. This allows us to estimate the out-of-sample error.
+
+We'll use the `createDataPartition` function from the `caret` package to create a balanced split based on the `classe` outcome variable.
+
+```{r partition-data}
+set.seed(12345) # for reproducibility
+inTrain <- createDataPartition(y = training.cleaned$classe, p = 0.7, list = FALSE)
+trainSet <- training.cleaned[inTrain, ]
+validationSet <- training.cleaned[-inTrain, ]
+
+# Check dimensions of the partitioned data
+dim(trainSet)
+dim(validationSet)
+```
+
+## 3.2. Model Training
+
+We will use the Random Forest algorithm to train our prediction model. Random Forest is a strong classifier, well-suited for this type of problem as it can handle a large number of predictors and is generally robust to overfitting.
+
+We will use the `train` function from the `caret` package, specifying the method as `"rf"` for Random Forest. We'll also use 5-fold cross-validation to ensure our model's performance is stable and to get a reliable estimate of its accuracy.
+
+```{r train-model, cache=TRUE}
+# Set up cross-validation with 5 folds
+fitControl <- trainControl(method = "cv", number = 5)
+
+# Train the Random Forest model
+# The formula classe ~ . means we use all other columns as predictors
+modelFit <- train(classe ~ ., data = trainSet, method = "rf", trControl = fitControl)
+
+# Print the model summary
+modelFit
+```
+
+# 4. Model Evaluation
+
+## 4.1. Performance on Validation Set
+
+Now that we have trained our model, we will evaluate its performance on the validation set, which the model has not seen before. This will give us an estimate of the out-of-sample error.
+
+We use the `predict` function with our trained model (`modelFit`) to make predictions on the `validationSet`. Then, we use the `confusionMatrix` function to compare the predicted outcomes with the actual `classe` values.
+
+```{r evaluate-model}
+# Make predictions on the validation set
+predictions <- predict(modelFit, newdata = validationSet)
+
+# Get the confusion matrix
+confMatrix <- confusionMatrix(predictions, as.factor(validationSet$classe))
+confMatrix
+```
+
+The accuracy on the validation set is very high, which suggests that our model generalizes well to new data. The out-of-sample error can be estimated as `1 - Accuracy`.
+
+# 5. Prediction on Test Data
+
+Finally, we will apply our trained model to the `pml.testing` dataset to predict the `classe` for the 20 provided test cases. Before making predictions, we must apply the same preprocessing steps to the test data as we did to the training data.
+
+```{r clean-test-data}
+# Apply the same column removal to the test set
+# First, identify columns with a high percentage of missing values in the ORIGINAL training data
+# This ensures we use the same set of columns as removed from the training set
+na_cols_test <- which(colSums(is.na(pml.training)) > 0.9 * nrow(pml.training))
+testing.cleaned <- pml.testing[, -na_cols_test]
+
+# Remove the same identifier columns from the test set
+identifier_cols_test <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+testing.cleaned <- testing.cleaned %>%
+  select(-one_of(identifier_cols_test))
+
+# Check dimensions of the cleaned test data
+dim(testing.cleaned)
+```
+
+Now, we make predictions using our `modelFit`.
+
+```{r predict-test}
+predictions_test <- predict(modelFit, newdata = testing.cleaned)
+predictions_test
+```
+
+These are the predictions for the 20 test cases. These predictions should be submitted to the Course Project Prediction Quiz.
+
+# 6. Conclusion
+
+In this project, we successfully built a predictive model using accelerometer data to classify the manner in which participants performed a barbell lift exercise. We followed a structured approach:
+
+1.  **Data Loading and Preprocessing**: We loaded the training and testing datasets, identified and removed columns with a high percentage of missing values, and discarded irrelevant identifier columns.
+2.  **Data Partitioning**: The cleaned training data was split into a training set (70%) and a validation set (30%) to allow for robust model evaluation.
+3.  **Model Training**: A Random Forest model was trained on the training set using 5-fold cross-validation. Random Forest was chosen for its ability to handle complex relationships and its robustness.
+4.  **Model Evaluation**: The trained model achieved high accuracy on the validation set, indicating good generalization capability and a low estimated out-of-sample error.
+5.  **Prediction**: Finally, the model was applied to the unseen test data to predict the `classe` for 20 new cases.
+
+This project demonstrates the effectiveness of machine learning techniques, particularly Random Forest, in classifying human activities based on sensor data. The high accuracy achieved suggests that the model is well-suited for this prediction task.
